@@ -2,6 +2,10 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("kotlinx-serialization")
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization") version "1.9.0"
 }
 
 android {
@@ -59,4 +63,14 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.5")
     implementation ("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation ("com.google.zxing:core:3.5.1")
+    // Retrofit para consumir servicios REST
+    implementation ("com.squareup.retrofit2:retrofit:2.9.0")
+
+    // Convertidor de JSON (Gson)
+    implementation ("com.squareup.retrofit2:converter-gson:2.9.0")
+
+    // Corrutinas de Kotlin para llamadas asíncronas
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.1")
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }

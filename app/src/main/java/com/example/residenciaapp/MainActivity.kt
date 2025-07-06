@@ -34,6 +34,14 @@ import androidx.core.content.FileProvider
 import android.widget.Toast
 import java.io.File
 import java.io.FileOutputStream
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.example.residenciaapp.network.ApiService
+import kotlinx.coroutines.*
+import androidx.compose.ui.platform.LocalContext
+import com.example.residenciaapp.network.ApiClient
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,6 +79,8 @@ fun QRCode(data: String, modifier: Modifier = Modifier) {
 fun LoginScreen(navController: NavHostController) {
     var id by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -110,7 +120,21 @@ fun LoginScreen(navController: NavHostController) {
 
         Button(
             onClick = {
-                navController.navigate("home/$id")
+                CoroutineScope(Dispatchers.IO).launch {
+                    val resident = ApiService.loginResidente(id, password)
+
+                    withContext(Dispatchers.Main) {
+                        if (resident != null) {
+                            navController.navigate("home/${resident.id}")
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Credenciales incorrectas o residente no encontrado",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -121,72 +145,60 @@ fun LoginScreen(navController: NavHostController) {
 
 @Composable
 fun HomeScreen(userId: String, navController: NavHostController) {
-    val user = when (userId) {
-        "123" -> Resident("123", "Juan", "Pérez", "Calle Falsa 123", "555-1234")
-        else -> Resident("000", "Desconocido", "Desconocido", "Sin domicilio", "000-0000")
+    val user = remember { mutableStateOf<Resident?>(null) }
+
+    LaunchedEffect(userId) {
+        user.value = ApiService.loginResidente(userId, "dummy") // <- Reemplaza "dummy" si deseas la contraseña real
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "ID: ${user.id}",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.Black
-        )
-        Text(
-            text = "Nombre: ${user.nombre}",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.Black
-        )
-        Text(
-            text = "Apellidos: ${user.apellidos}",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.Black
-        )
-        Text(
-            text = "Domicilio: ${user.domicilio}",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.Black
-        )
-        Text(
-            text = "Teléfono: ${user.telefono}",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.Black
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = "Código QR del residente:",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color.Black
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        QRCode(data = user.id)
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = { navController.navigate("vehicles/${user.id}") },
-            modifier = Modifier.fillMaxWidth()
+    if (user.value == null) {
+        // Muestra una pantalla de carga mientras se obtiene el residente
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
-            Text("Vehículos")
+            CircularProgressIndicator()
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Button(
-            onClick = { navController.navigate("guests/${user.id}") },
-            modifier = Modifier.fillMaxWidth()
+    } else {
+        // Mostramos los datos del residente
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Invitados")
+            Text("ID: ${user.value?.id}", style = MaterialTheme.typography.bodyLarge)
+            Text("Nombre: ${user.value?.nombre}", style = MaterialTheme.typography.bodyLarge)
+            Text("Apellidos: ${user.value?.apellidos}", style = MaterialTheme.typography.bodyLarge)
+            Text("Domicilio: ${user.value?.domicilio}", style = MaterialTheme.typography.bodyLarge)
+            Text("Teléfono: ${user.value?.telefono}", style = MaterialTheme.typography.bodyLarge)
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text("Código QR del residente:", style = MaterialTheme.typography.titleLarge)
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            QRCode(data = user.value?.codigoQR ?: "") // Evita null
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = { navController.navigate("vehicles/${user.value?.id}") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Vehículos")
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = { navController.navigate("guests/${user.value?.id}") },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Invitados")
+            }
         }
     }
 }
@@ -225,19 +237,22 @@ data class Resident(
     val nombre: String,
     val apellidos: String,
     val domicilio: String,
-    val telefono: String
+    val telefono: String,
+    val password: String,
+    val codigoQR: String // 👈 Este es el importante
 )
 
 @Composable
 fun VehicleScreen(userId: String, navController: NavHostController) {
-    // Simulación de vehículos por usuario
-    val vehicleList = remember {
-        when (userId) {
-            "123" -> listOf(
-                Vehicle("V001", "Toyota", "Corolla", "ABC-123"),
-                Vehicle("V002", "Honda", "Civic", "XYZ-789")
-            )
-            else -> emptyList()
+    val context = LocalContext.current
+    var vehicleList by remember { mutableStateOf<List<Vehicle>>(emptyList()) }
+
+    LaunchedEffect(userId) {
+        val result = ApiService.obtenerVehiculos(userId)
+        if (result != null) {
+            vehicleList = result
+        } else {
+            Toast.makeText(context, "Error al cargar vehículos", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -245,14 +260,9 @@ fun VehicleScreen(userId: String, navController: NavHostController) {
         modifier = Modifier
             .fillMaxSize()
             .padding(24.dp)
-            .verticalScroll(rememberScrollState())  // <-- Agregado para scroll
+            .verticalScroll(rememberScrollState())
     ) {
-        Text(
-            "Vehículos del usuario $userId",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color.Black
-        )
-
+        Text("Vehículos del usuario $userId", style = MaterialTheme.typography.titleLarge, color = Color.Black)
         Spacer(modifier = Modifier.height(16.dp))
 
         if (vehicleList.isEmpty()) {
@@ -278,9 +288,7 @@ fun VehicleScreen(userId: String, navController: NavHostController) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
-            onClick = {
-                navController.navigate("add_vehicle/$userId")
-            },
+            onClick = { navController.navigate("add_vehicle/$userId") },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Agregar vehículo")
@@ -299,7 +307,8 @@ data class Vehicle(
     val id: String,
     val marca: String,
     val modelo: String,
-    val placas: String
+    val placas: String,
+    val idResidente: String  // <-- este campo es nuevo
 )
 
 @Composable
@@ -307,6 +316,7 @@ fun AddVehicleScreen(userId: String, navController: NavHostController) {
     var marca by remember { mutableStateOf("") }
     var modelo by remember { mutableStateOf("") }
     var placas by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -350,8 +360,19 @@ fun AddVehicleScreen(userId: String, navController: NavHostController) {
         Button(
             onClick = {
                 val generatedId = "VEH_${System.currentTimeMillis()}"
-                println("Nuevo vehículo → ID: $generatedId, Marca: $marca, Modelo: $modelo, Placas: $placas")
-                navController.popBackStack()
+                val newVehicle = Vehicle(generatedId, marca, modelo, placas, userId)
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    val success = ApiService.agregarVehiculo(newVehicle)
+                    withContext(Dispatchers.Main) {
+                        if (success) {
+                            Toast.makeText(context, "Vehículo agregado correctamente", Toast.LENGTH_SHORT).show()
+                            navController.popBackStack()
+                        } else {
+                            Toast.makeText(context, "Error al guardar vehículo", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -361,9 +382,7 @@ fun AddVehicleScreen(userId: String, navController: NavHostController) {
         Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedButton(
-            onClick = {
-                navController.popBackStack()
-            },
+            onClick = { navController.popBackStack() },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Cancelar")
@@ -373,18 +392,14 @@ fun AddVehicleScreen(userId: String, navController: NavHostController) {
 
 @Composable
 fun GuestScreen(userId: String, navController: NavHostController) {
-    val guestList = remember {
-        when (userId) {
-            "123" -> listOf(
-                Guest("G001", "Carlos", "Ramírez", "Permanente", "2025-01-01", null),
-                Guest("G002", "Ana", "López", "Temporal", "2025-07-01", "2025-07-10"), // Puedes cambiar fechas para probar
-                Guest("G003", "Luis", "Martínez", "Temporal", "2025-06-01", "2025-07-01")
-            )
-            else -> emptyList()
-        }
-    }
-
+    val guestList = remember { mutableStateListOf<Guest>() }
     val context = LocalContext.current
+
+    LaunchedEffect(userId) {
+        val invitados = ApiService.obtenerInvitados(userId)
+        guestList.clear()
+        guestList.addAll(invitados)
+    }
 
     Column(
         modifier = Modifier
@@ -400,18 +415,12 @@ fun GuestScreen(userId: String, navController: NavHostController) {
             Text("No hay invitados registrados.", color = Color.Black)
         } else {
             guestList.forEach { guest ->
-
                 val backgroundColor = when (guest.tipoInvitacion) {
                     "Permanente" -> Color(0xFF2196F3) // Azul
                     "Temporal" -> {
                         val today = LocalDate.now()
                         val fin = guest.fechaFin?.let { LocalDate.parse(it) }
-
-                        if (fin != null && today.isAfter(fin)) {
-                            Color(0xFFF44336) // Rojo (expirado)
-                        } else {
-                            Color(0xFF4CAF50) // Verde (vigente)
-                        }
+                        if (fin != null && today.isAfter(fin)) Color(0xFFF44336) else Color(0xFF4CAF50)
                     }
                     else -> Color.LightGray
                 }
@@ -437,7 +446,6 @@ fun GuestScreen(userId: String, navController: NavHostController) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
-                                // 1. Generar el bitmap QR
                                 val qrBitmap = QRCodeWriter().encode("INV-${guest.id}", BarcodeFormat.QR_CODE, 512, 512)
                                 val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565).apply {
                                     for (x in 0 until 512) {
@@ -447,25 +455,22 @@ fun GuestScreen(userId: String, navController: NavHostController) {
                                     }
                                 }
 
-                                // 2. Guardar el bitmap en cache y obtener Uri
                                 val file = File(context.cacheDir, "${guest.id}_qr.png")
                                 FileOutputStream(file).use {
                                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
                                 }
                                 file.setReadable(true, false)
-                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
 
-                                // 3. Crear el mensaje
                                 val message = """
-        Hola ${guest.nombre},
-        Has sido registrado como invitado.
-        ID: ${guest.id}
-        Tipo: ${guest.tipoInvitacion}
-        ${guest.fechaInicio?.let { "Desde: $it\n" } ?: ""}
-        ${guest.fechaFin?.let { "Hasta: $it\n" } ?: ""}
-    """.trimIndent()
+                                    Hola ${guest.nombre},
+                                    Has sido registrado como invitado.
+                                    ID: ${guest.id}
+                                    Tipo: ${guest.tipoInvitacion}
+                                    ${guest.fechaInicio?.let { "Desde: $it\n" } ?: ""}
+                                    ${guest.fechaFin?.let { "Hasta: $it\n" } ?: ""}
+                                """.trimIndent()
 
-                                // 4. Intent para WhatsApp normal
                                 val intent = Intent().apply {
                                     action = Intent.ACTION_SEND
                                     putExtra(Intent.EXTRA_TEXT, message)
@@ -478,13 +483,7 @@ fun GuestScreen(userId: String, navController: NavHostController) {
                                 try {
                                     context.startActivity(intent)
                                 } catch (e: Exception) {
-                                    // Intentar con WhatsApp Business
-                                    intent.setPackage("com.whatsapp.w4b")
-                                    try {
-                                        context.startActivity(intent)
-                                    } catch (ex: Exception) {
-                                        Toast.makeText(context, "No se pudo abrir WhatsApp", Toast.LENGTH_LONG).show()
-                                    }
+                                    Toast.makeText(context, "WhatsApp no está instalado", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -499,9 +498,7 @@ fun GuestScreen(userId: String, navController: NavHostController) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
-            onClick = {
-                navController.navigate("add_guest/$userId")
-            },
+            onClick = { navController.navigate("add_guest/$userId") },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Agregar invitado")
@@ -522,7 +519,8 @@ data class Guest(
     val apellidos: String,
     val tipoInvitacion: String,
     val fechaInicio: String? = null,
-    val fechaFin: String? = null
+    val fechaFin: String? = null,
+    val residenteId: String  // <- este campo es importante
 )
 
 @Composable
@@ -535,6 +533,7 @@ fun AddGuestScreen(userId: String, navController: NavHostController) {
     var fechaInicio by remember { mutableStateOf("") }
     var fechaFin by remember { mutableStateOf("") }
 
+    val context = LocalContext.current
     val mostrarFechas = tipoInvitacion == "Temporal"
 
     Column(
@@ -543,12 +542,7 @@ fun AddGuestScreen(userId: String, navController: NavHostController) {
             .padding(24.dp),
         verticalArrangement = Arrangement.Top
     ) {
-        Text(
-            text = "Agregar invitado para $userId",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color.Black
-        )
-
+        Text("Agregar invitado para $userId", style = MaterialTheme.typography.titleLarge, color = Color.Black)
         Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
@@ -571,14 +565,9 @@ fun AddGuestScreen(userId: String, navController: NavHostController) {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(modifier = Modifier.fillMaxWidth()) {
             Text("Tipo de invitación: ", color = Color.Black)
-
             Spacer(modifier = Modifier.width(16.dp))
-
             DropdownMenuTipoInvitacion(
                 tipoActual = tipoInvitacion,
                 onTipoSelected = { tipoInvitacion = it }
@@ -587,7 +576,6 @@ fun AddGuestScreen(userId: String, navController: NavHostController) {
 
         if (mostrarFechas) {
             Spacer(modifier = Modifier.height(8.dp))
-
             OutlinedTextField(
                 value = fechaInicio,
                 onValueChange = { fechaInicio = it },
@@ -595,9 +583,7 @@ fun AddGuestScreen(userId: String, navController: NavHostController) {
                 modifier = Modifier.fillMaxWidth(),
                 textStyle = LocalTextStyle.current.copy(color = Color.Black)
             )
-
             Spacer(modifier = Modifier.height(8.dp))
-
             OutlinedTextField(
                 value = fechaFin,
                 onValueChange = { fechaFin = it },
@@ -611,8 +597,26 @@ fun AddGuestScreen(userId: String, navController: NavHostController) {
 
         Button(
             onClick = {
-                println("Nuevo invitado → ID: $id, Nombre: $nombre $apellidos, Tipo: $tipoInvitacion, Inicio: $fechaInicio, Fin: $fechaFin")
-                navController.popBackStack()
+                val nuevoInvitado = Guest(
+                    id = id,
+                    nombre = nombre,
+                    apellidos = apellidos,
+                    tipoInvitacion = tipoInvitacion,
+                    fechaInicio = if (tipoInvitacion == "Temporal") fechaInicio else null,
+                    fechaFin = if (tipoInvitacion == "Temporal") fechaFin else null,
+                    residenteId = userId
+                )
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    val exito = ApiService.agregarInvitado(nuevoInvitado)
+                    withContext(Dispatchers.Main) {
+                        if (exito) {
+                            navController.popBackStack()
+                        } else {
+                            Toast.makeText(context, "Error al guardar invitado", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
